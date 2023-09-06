@@ -28,16 +28,28 @@ def get_time_aliases(start_or_end: str) -> tuple[str]:
 
 class Station(BaseModel):
     station_id: int
+    terminal_id: str
     station_name: str
-    lat: float | None = None
-    lng: float | None = None
+    lat: float
+    lng: float
+    n_docks: int
+    install_date: datetime | None = None
+    removal_date: datetime | None = None
+
+    @field_validator("station_id", mode="before")
+    def parse_station_id(cls, v: str) -> int:
+        return int(v.removeprefix("BikePoints_"))
+
+    @field_validator("install_date", "removal_date", mode="before")
+    def parse_dates(cls, v: str) -> int:
+        return v or None
 
 
 class Ride(BaseModel):
     rental_id: int = Field(validation_alias=AliasChoices("Rental Id", "Number"))
-    start_station_id: int = Field(validation_alias=AliasChoices(*get_station_id_aliases("Start")))
+    start_station_id: str = Field(validation_alias=AliasChoices(*get_station_id_aliases("Start")))
     start_station_name: str = Field(validation_alias=AliasChoices(*get_station_name_aliases("Start")))
-    end_station_id: int | None = Field(validation_alias=AliasChoices(*get_station_id_aliases("End")))
+    end_station_id: str | None = Field(validation_alias=AliasChoices(*get_station_id_aliases("End")))
     end_station_name: str | None = Field(validation_alias=AliasChoices(*get_station_name_aliases("End")))
     bike_id: int | None = Field(validation_alias=AliasChoices("Bike Id", "Bike number"))
     start_time: datetime = Field(validation_alias=AliasChoices(*get_time_aliases("Start")))
@@ -57,23 +69,11 @@ class Ride(BaseModel):
     def parse_datetime(cls, v: str | None) -> datetime:
         if v is None:
             return None
-        for fmt in ("%d/%m/%Y %H:%M", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S"):
+        for fmt in ("%d/%m/%Y %H:%M", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
             try:
                 return datetime.strptime(v, fmt)
             except ValueError:
                 pass
-
-    @field_validator("start_station_id", "end_station_id", mode="before")
-    @classmethod
-    def parse_station_id(cls, v: str | None) -> int | str | None:
-        if v is None:
-            return None
-        return {
-            "200217old2": -1,
-            "300006-1": -2,
-            "Tabletop1": -3,
-            "001057_old": -4,
-        }.get(v, v)
 
     @field_validator("end_station_id", mode="after")
     @classmethod
@@ -81,6 +81,35 @@ class Ride(BaseModel):
         if v == 0:
             return None
         return v
+
+    def repair_stations(
+        self,
+        station_ids: set[str],
+        stations_terminal: dict[str, int],
+        stations_name: dict[str, int],
+    ) -> None:
+        self.start_station_id = self.repair_station_id(
+            self.start_station_id, self.start_station_name, station_ids, stations_terminal, stations_name
+        )
+        self.end_station_id = self.repair_station_id(
+            self.end_station_id, self.end_station_name, station_ids, stations_terminal, stations_name
+        )
+
+    @staticmethod
+    def repair_station_id(
+        id_: int,
+        name: str,
+        station_ids: set[str],
+        stations_terminal: dict[str, Station],
+        stations_name: dict[str, Station],
+    ) -> int:
+        if id_ in station_ids:
+            return id_
+        if station_id := stations_terminal.get(id_):
+            return station_id
+        if station_id := stations_name.get(name):
+            return station_id
+        raise ValueError(f"Could not repair station {id_} {name}")
 
     def to_stations(self) -> list[Station]:
         start = Station(

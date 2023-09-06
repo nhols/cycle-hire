@@ -1,9 +1,10 @@
 import itertools
+import json
 import logging
 import os
 
 from pandas import DataFrame
-from etl.models import Ride, Station
+from etl.models import Ride, Station, Station2, get_station_id_aliases, get_station_name_aliases
 
 from etl.read import load_ride, process_ride_df, sha256sum
 from etl.store import Store
@@ -11,10 +12,48 @@ from etl.store import Store
 logging.basicConfig(
     level=logging.DEBUG,
     format="[%(levelname)s]%(asctime)s: %(message)s",
-    handlers=[logging.FileHandler(".log2"), logging.StreamHandler()],
+    handlers=[logging.FileHandler(".log3"), logging.StreamHandler()],
 )
 
 RIDE_DATA_DIR = "data/ride_data/"
+STATION_DATA_JSON = "data/docking_stations.json"
+STATION_DATA_JSON2 = "data/docking_stations2.json"
+
+
+def read_stations1() -> list[Station]:
+    return [
+        Station(
+            station_id=station["stationId"],
+            terminal_id=station["siteId"],
+            station_name=station["stationName"],
+            lat=station["location"]["lat"],
+            lng=station["location"]["lng"],
+            n_docks=station["totalBikesAvailable"] + station["bikeDocksAvailable"],
+        )
+        for station in json.loads(open(STATION_DATA_JSON).read())["data"]["supply"]["stations"]
+    ]
+
+
+def read_stations2() -> list[Station]:
+    return [
+        Station(
+            station_id=station["id"],
+            terminal_id=next(
+                prop["value"] for prop in station["additionalProperties"] if prop["key"] == "TerminalName"
+            ),
+            station_name=station["commonName"],
+            lat=station["lat"],
+            lng=station["lon"],
+            install_date=next(
+                prop["value"] for prop in station["additionalProperties"] if prop["key"] == "InstallDate"
+            ),
+            removal_date=next(
+                prop["value"] for prop in station["additionalProperties"] if prop["key"] == "RemovalDate"
+            ),
+            n_docks=next(prop["value"] for prop in station["additionalProperties"] if prop["key"] == "NbDocks"),
+        )
+        for station in json.loads(open(STATION_DATA_JSON2).read())
+    ]
 
 
 def list_files(store: Store):
@@ -30,52 +69,57 @@ def list_files(store: Store):
         yield file
 
 
-def df_to_rides_stations(df: DataFrame) -> tuple[list[Ride], list[Station], int]:
+def df_to_rides(df: DataFrame, stations_ids, stations_terminals, stations_names) -> tuple[list[Ride], list[dict]]:
     rides = []
-    exceptions = 0
+    exceptions = []
     for record in df.to_dict(orient="records"):
         try:
             ride = Ride(**record)
+            ride.repair_stations(stations_ids, stations_terminals, stations_names)
             rides.append(ride)
         except Exception as exc:
-            logging.error(str(exc))
-            logging.error(record)
-            exceptions += 1
+            # logging.error(str(exc))
+            # logging.error(record)
+            exceptions.append(record)
 
-    stations = list(itertools.chain(*(ride.to_stations() for ride in rides)))
-    return rides, stations, exceptions
+    return rides, exceptions
 
 
 def run(store: Store):
-    # seen_rides = store.ride_ids
-    # seen_stations = store.station_ids
+    stations1 = read_stations1()
+    stations2 = read_stations2()
+    stations = list({station.station_id: station for station in itertools.chain(stations1, stations2)}.values())
+    store.persist_station_data(stations)
+    store.commit()
+    stations_ids = {str(station.station_id) for station in stations}
+    stations_terminals = {
+        station.terminal_id: str(station.station_id) for station in itertools.chain(stations1, stations2)
+    }
+    stations_names = {
+        station.station_name: str(station.station_id) for station in itertools.chain(stations1, stations2)
+    }
 
     for file in list_files(store):
+        if file == "325JourneyDataExtract06Jul2022-12Jul2022.csv":
+            continue
         filehash = sha256sum(RIDE_DATA_DIR + file)
         logging.info(f"Processing {file}")
         df = load_ride(RIDE_DATA_DIR + file)
         df = process_ride_df(df)
-        rides, stations, exceptions = df_to_rides_stations(df)
+        rides, exceptions = df_to_rides(df, stations_ids, stations_terminals, stations_names)
         try:
-            # rides = [ride for ride in rides if ride.rental_id not in seen_rides]
-            # stations = [station for station in stations if station.station_id not in seen_stations]
-            stations = list({station.station_id: station for station in stations}.values())
-            n_stations = store.persist_station_data(stations)
-            n_rides = store.persist_ride_data(rides)
+            n_rides = store.persist_ride_data(rides, file)
             if exceptions:
-                logging.warning(f"{exceptions} exceptions occurred for file {file}")
-            else:
-                store.persist_file_hash(file, filehash)
+                logging.warning(f"{len(exceptions)} exceptions occurred for file {file}")
+                store.persist_exceptions(exceptions, file)
+            store.persist_file_hash(file, filehash)
         except Exception as exc:
             logging.error(str(exc))
             store.rollback()
         else:
             store.commit()
-            # seen_rides.update(ride.rental_id for ride in rides)
-            # seen_stations.update(station.station_id for station in stations)
             logging.info(f"Successfully processed {file}")
             logging.info(f"{n_rides} new rides added")
-            logging.info(f"{n_stations} new stations added")
 
 
 if __name__ == "__main__":

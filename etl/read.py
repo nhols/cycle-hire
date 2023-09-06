@@ -18,6 +18,7 @@ def load_ride(ride_file: str) -> pd.DataFrame:
 def process_ride_df(df: pd.DataFrame):
     if "Total duration (ms)" in df.columns:
         df["Duration"] = (df["Total duration (ms)"].astype(int) / 1000).astype(int)
+    df.dropna(how="all", inplace=True)
     return df.where(df.notnull(), None)
 
 

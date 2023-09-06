@@ -6,11 +6,15 @@ from etl.models import Ride, Station
 
 class Store(ABC):
     @abstractmethod
-    def persist_ride_data(self, data: list[Ride]) -> int:
+    def persist_ride_data(self, data: list[Ride], file_name: str | None = None) -> int:
         raise NotImplementedError
 
     @abstractmethod
     def persist_station_data(self, data: list[Station]) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    def persist_exceptions(self, exceptions: list[dict], file: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -42,20 +46,34 @@ class Store(ABC):
 
 class PGStore(Store):
     def __init__(self, **kwargs):
+        from psycopg2.extras import Json
+        from psycopg2.extensions import register_adapter
+
+        register_adapter(dict, Json)
+
         self.conn = psycopg2.connect(**kwargs)
 
-    def persist_ride_data(self, data: list[Ride]) -> int:
+    def persist_ride_data(self, data: list[Ride], file_name: str | None = None) -> int:
         with self.conn.cursor() as cur:
             cur.executemany(
                 """
-                INSERT INTO rides (rental_id, duration, bike_id, end_station_id, start_time, start_station_id) VALUES 
-                (%(rental_id)s, %(duration)s, %(bike_id)s, %(end_station_id)s, %(start_time)s, %(start_station_id)s)
+                INSERT INTO rides (rental_id, duration, bike_id, end_station_id, start_time, start_station_id, end_time, file_name) VALUES 
+                (%(rental_id)s, %(duration)s, %(bike_id)s, %(end_station_id)s, %(start_time)s, %(start_station_id)s, %(end_time)s, %(file_name)s)
                 ON CONFLICT (rental_id) DO NOTHING
             """,
                 [
                     ride.model_dump(
-                        include=["rental_id", "duration", "bike_id", "end_station_id", "start_time", "start_station_id"]
+                        include=[
+                            "rental_id",
+                            "duration",
+                            "bike_id",
+                            "end_station_id",
+                            "start_time",
+                            "start_station_id",
+                            "end_time",
+                        ]
                     )
+                    | {"file_name": file_name}
                     for ride in data
                 ],
             )
@@ -65,12 +83,25 @@ class PGStore(Store):
         with self.conn.cursor() as cur:
             cur.executemany(
                 """
-                    INSERT INTO stations (station_id, station_name, lat, lng) VALUES
-                    (%(station_id)s, %(station_name)s, %(lat)s, %(lng)s) ON CONFLICT (station_id) DO NOTHING
+                    INSERT INTO stations (station_id, station_name, lat, lng, n_docks, install_date, removal_date) 
+                    VALUES
+                    (%(station_id)s, %(station_name)s, %(lat)s, %(lng)s,%(n_docks)s,%(install_date)s, %(removal_date)s) 
+                    ON CONFLICT (station_id) DO NOTHING
             """,
                 [station.model_dump() for station in data],
             )
             return cur.rowcount
+
+    def persist_exceptions(self, exceptions: list[dict], file: str) -> None:
+        with self.conn.cursor() as cur:
+            cur.executemany(
+                """
+                    INSERT INTO exceptions (file_name, data) 
+                    VALUES
+                    (%s, %s)
+            """,
+                [(file, exc) for exc in exceptions],
+            )
 
     def persist_file_hash(self, filename: str, filehash: str) -> None:
         with self.conn.cursor() as cur:
