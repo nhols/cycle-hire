@@ -57,9 +57,32 @@ class PGStore(Store):
         with self.conn.cursor() as cur:
             cur.executemany(
                 """
-                INSERT INTO rides (rental_id, duration, bike_id, end_station_id, start_time, start_station_id, end_time, file_name) VALUES 
-                (%(rental_id)s, %(duration)s, %(bike_id)s, %(end_station_id)s, %(start_time)s, %(start_station_id)s, %(end_time)s, %(file_name)s)
-                ON CONFLICT (rental_id) DO NOTHING
+                INSERT INTO
+                    rides (
+                        rental_id,
+                        duration,
+                        bike_id,
+                        end_station_id,
+                        end_station_name,
+                        start_time,
+                        start_station_id,
+                        start_station_name,
+                        end_time,
+                        file_name
+                    )
+                VALUES
+                    (
+                        %(rental_id)s,
+                        %(duration)s,
+                        %(bike_id)s,
+                        %(end_station_id)s,
+                        %(end_station_name)s,
+                        %(start_time)s,
+                        %(start_station_id)s,
+                        %(start_station_name)s,
+                        %(end_time)s,
+                        %(file_name)s
+                    ) ON CONFLICT (rental_id) DO NOTHING;
             """,
                 [
                     ride.model_dump(
@@ -68,8 +91,10 @@ class PGStore(Store):
                             "duration",
                             "bike_id",
                             "end_station_id",
+                            "end_station_name",
                             "start_time",
                             "start_station_id",
+                            "start_station_name",
                             "end_time",
                         ]
                     )
@@ -122,10 +147,22 @@ class PGStore(Store):
             return {filename: filehash for filename, filehash in cur.fetchall()}
 
     @property
-    def station_ids(self) -> None:
+    def station_ids(self) -> set[str]:
         with self.conn.cursor() as cur:
             cur.execute("SELECT station_id FROM stations")
-            return {station_id for station_id, in cur.fetchall()}
+            return {str(station_id) for station_id, in cur.fetchall()}
+
+    @property
+    def station_name_id_map(self) -> dict[str, str]:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT station_id, station_name FROM stations")
+            return {name: str(id_) for name, id_, in cur.fetchall()}
+
+    @property
+    def station_terminal_id_map(self) -> dict[str, str]:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT terminal_id, station_id FROM stations WHERE terminal_id IS NOT NULL")
+            return {terminal: str(id_) for terminal, id_, in cur.fetchall()}
 
     @property
     def ride_ids(self) -> None:

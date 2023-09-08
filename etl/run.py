@@ -2,6 +2,7 @@ import itertools
 import json
 import logging
 import os
+from turtle import st
 
 from pandas import DataFrame
 from etl.models import Ride, Station, Station2, get_station_id_aliases, get_station_name_aliases
@@ -69,36 +70,44 @@ def list_files(store: Store):
         yield file
 
 
-def df_to_rides(df: DataFrame, stations_ids, stations_terminals, stations_names) -> tuple[list[Ride], list[dict]]:
+def df_to_rides(
+    df: DataFrame, stations_ids, stations_terminals, stations_names, manual_id_map
+) -> tuple[list[Ride], list[dict]]:
     rides = []
     exceptions = []
     for record in df.to_dict(orient="records"):
         try:
             ride = Ride(**record)
-            ride.repair_stations(stations_ids, stations_terminals, stations_names)
+            ride.repair_stations(stations_ids, stations_terminals, stations_names, manual_id_map)
             rides.append(ride)
         except Exception as exc:
-            # logging.error(str(exc))
+            logging.error(str(exc))
             # logging.error(record)
             exceptions.append(record)
 
     return rides, exceptions
 
 
-def run(store: Store):
+def run_stations(store: Store):
     stations1 = read_stations1()
     stations2 = read_stations2()
     stations = list({station.station_id: station for station in itertools.chain(stations1, stations2)}.values())
     store.persist_station_data(stations)
+    with store.conn.cursor() as cur:
+        cur.execute(open("data/manual_stations.sql").read())
     store.commit()
-    stations_ids = {str(station.station_id) for station in stations}
-    stations_terminals = {
-        station.terminal_id: str(station.station_id) for station in itertools.chain(stations1, stations2)
-    }
-    stations_names = {
-        station.station_name: str(station.station_id) for station in itertools.chain(stations1, stations2)
-    }
 
+
+def run(store: Store):
+    run_stations(store)
+    stations_ids = store.station_ids
+    stations_terminals = store.station_terminal_id_map
+    stations_names = store.station_name_id_map
+    manual_id_map = {
+        "137": "259",
+        "300006-1": "852",
+        "639": "852",
+    }
     for file in list_files(store):
         if file == "325JourneyDataExtract06Jul2022-12Jul2022.csv":
             continue
@@ -106,7 +115,7 @@ def run(store: Store):
         logging.info(f"Processing {file}")
         df = load_ride(RIDE_DATA_DIR + file)
         df = process_ride_df(df)
-        rides, exceptions = df_to_rides(df, stations_ids, stations_terminals, stations_names)
+        rides, exceptions = df_to_rides(df, stations_ids, stations_terminals, stations_names, manual_id_map)
         try:
             n_rides = store.persist_ride_data(rides, file)
             if exceptions:

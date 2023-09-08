@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 from pydantic import BaseModel, Field, AliasChoices, field_validator
 
 
@@ -87,13 +88,15 @@ class Ride(BaseModel):
         station_ids: set[str],
         stations_terminal: dict[str, int],
         stations_name: dict[str, int],
+        manual_id_map: dict[str, str] = None,
     ) -> None:
         self.start_station_id = self.repair_station_id(
-            self.start_station_id, self.start_station_name, station_ids, stations_terminal, stations_name
+            self.start_station_id, self.start_station_name, station_ids, stations_terminal, stations_name, manual_id_map
         )
-        self.end_station_id = self.repair_station_id(
-            self.end_station_id, self.end_station_name, station_ids, stations_terminal, stations_name
-        )
+        if self.end_station_id is not None:
+            self.end_station_id = self.repair_station_id(
+                self.end_station_id, self.end_station_name, station_ids, stations_terminal, stations_name, manual_id_map
+            )
 
     @staticmethod
     def repair_station_id(
@@ -102,12 +105,15 @@ class Ride(BaseModel):
         station_ids: set[str],
         stations_terminal: dict[str, Station],
         stations_name: dict[str, Station],
+        manual_id_map: dict[str, str] = None,
     ) -> int:
         if id_ in station_ids:
             return id_
         if station_id := stations_terminal.get(id_):
             return station_id
         if station_id := stations_name.get(name):
+            return station_id
+        if manual_id_map and (station_id := manual_id_map.get(id_)):
             return station_id
         raise ValueError(f"Could not repair station {id_} {name}")
 
