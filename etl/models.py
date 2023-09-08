@@ -79,7 +79,7 @@ class Ride(BaseModel):
     @field_validator("end_station_id", mode="after")
     @classmethod
     def zero_to_none_station_id(cls, v: str | None) -> datetime:
-        if v == 0:
+        if str(v) == "0":
             return None
         return v
 

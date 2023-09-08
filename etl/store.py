@@ -108,9 +108,9 @@ class PGStore(Store):
         with self.conn.cursor() as cur:
             cur.executemany(
                 """
-                    INSERT INTO stations (station_id, station_name, lat, lng, n_docks, install_date, removal_date) 
+                    INSERT INTO stations (station_id, station_name, terminal_id, lat, lng, n_docks, install_date, removal_date) 
                     VALUES
-                    (%(station_id)s, %(station_name)s, %(lat)s, %(lng)s,%(n_docks)s,%(install_date)s, %(removal_date)s) 
+                    (%(station_id)s, %(station_name)s, %(terminal_id)s, %(lat)s, %(lng)s,%(n_docks)s,%(install_date)s, %(removal_date)s) 
                     ON CONFLICT (station_id) DO NOTHING
             """,
                 [station.model_dump() for station in data],

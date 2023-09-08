@@ -81,7 +81,7 @@ def df_to_rides(
             ride.repair_stations(stations_ids, stations_terminals, stations_names, manual_id_map)
             rides.append(ride)
         except Exception as exc:
-            logging.error(str(exc))
+            # logging.error(str(exc))
             # logging.error(record)
             exceptions.append(record)
 
