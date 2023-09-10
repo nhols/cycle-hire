@@ -38,3 +38,18 @@ CREATE TABLE exceptions (
     data JSONB NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+CREATE MATERIALIZED VIEW rides_by_day AS (
+    SELECT
+        start_time :: DATE AS date,
+        count(*) n
+    FROM
+        rides
+    GROUP BY
+        1
+);
+
+CREATE TABLE bank_hols (
+    date DATE NOT NULL UNIQUE,
+    name TEXT NOT NULL
+);
